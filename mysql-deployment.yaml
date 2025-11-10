@@ -30,7 +30,7 @@ spec:
         - name: ghcr-secret 
       containers:
       - name: mysql
-        image: ghcr.io/devpandai/mysql:latest
+        image: ghcr.io/devpandai/mysql-app:latest
         env:
         - name: MYSQL_ROOT_PASSWORD
           value: rootpassword
