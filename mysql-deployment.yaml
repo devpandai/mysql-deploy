@@ -1,8 +1,38 @@
+# Headless service untuk akses antar pod
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql
+  labels:
+    app: mysql
+spec:
+  ports:
+    - port: 3306
+      name: mysql
+  clusterIP: None
+  selector:
+    app: mysql
+---
+# Service untuk akses dari luar (optional)
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-master
+spec:
+  ports:
+    - port: 3306
+  selector:
+    app: mysql
+    role: master
+---
+# StatefulSet MySQL Master-Replica
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: mysql
 spec:
+  serviceName: "mysql"
+  replicas: 3
   selector:
     matchLabels:
       app: mysql
@@ -14,18 +44,64 @@ spec:
       containers:
       - name: mysql
         image: mysql:5.7
+        ports:
+        - containerPort: 3306
         env:
         - name: MYSQL_ROOT_PASSWORD
           value: Qw#rty
-        ports:
-        - containerPort: 3306
+        - name: MYSQL_REPLICATION_USER
+          value: repl
+        - name: MYSQL_REPLICATION_PASSWORD
+          value: replpass
+        volumeMounts:
+        - name: mysql-data
+          mountPath: /var/lib/mysql
+        - name: init-script
+          mountPath: /docker-entrypoint-initdb.d
+  volumeClaimTemplates:
+  - metadata:
+      name: mysql-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 2Gi
+  # Tambahkan init script untuk konfigurasi master/replica
+  # lewat ConfigMap di bawah
+  volumeMounts:
+  - name: init-script
+    mountPath: /docker-entrypoint-initdb.d
 ---
+# ConfigMap untuk setup master-replica
 apiVersion: v1
-kind: Service
+kind: ConfigMap
 metadata:
-  name: mysql
+  name: mysql-init-script
+data:
+  master-replica-setup.sh: |
+    #!/bin/bash
+    set -e
+
+    echo "Configuring MySQL replication..."
+    POD_NAME=$(hostname)
+
+    # Jalankan hanya di master
+    if [[ "$POD_NAME" == "mysql-0" ]]; then
+      echo "Setting up master..."
+      mysql -u root -p${MYSQL_ROOT_PASSWORD} -e "CREATE USER IF NOT EXISTS '${MYSQL_REPLICATION_USER}'@'%' IDENTIFIED BY '${MYSQL_REPLICATION_PASSWORD}';"
+      mysql -u root -p${MYSQL_ROOT_PASSWORD} -e "GRANT REPLICATION SLAVE ON *.* TO '${MYSQL_REPLICATION_USER}'@'%'; FLUSH PRIVILEGES;"
+      mysql -u root -p${MYSQL_ROOT_PASSWORD} -e "FLUSH TABLES WITH READ LOCK; SHOW MASTER STATUS;"
+    else
+      echo "Setting up replica for ${POD_NAME}..."
+      MASTER_HOST="mysql-0.mysql"
+      mysql -u root -p${MYSQL_ROOT_PASSWORD} -e "CHANGE MASTER TO MASTER_HOST='${MASTER_HOST}', MASTER_USER='${MYSQL_REPLICATION_USER}', MASTER_PASSWORD='${MYSQL_REPLICATION_PASSWORD}', MASTER_LOG_FILE='mysql-bin.000001', MASTER_LOG_POS=4; START SLAVE;"
+    fi
+---
+# Tambahkan volume untuk init script
+apiVersion: v1
+kind: Volume
+metadata:
+  name: init-script
 spec:
-  ports:
-    - port: 3306
-  selector:
-    app: mysql
+  configMap:
+    name: mysql-init-script
