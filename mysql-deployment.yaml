@@ -16,9 +16,7 @@ spec:
         image: mysql:5.7
         env:
         - name: MYSQL_ROOT_PASSWORD
-          value: rootpassword
-        - name: MYSQL_DATABASE
-          value: wordpress
+          value: Qw#rty
         ports:
         - containerPort: 3306
 ---
